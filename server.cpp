@@ -1,173 +1,197 @@
-#include <iostream>
-#include <bits/stdc++.h>
+#include "Server.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
-#include <poll.h>
+#include <iostream>
+#include <sstream>
+
 using namespace std;
 
-int main()
+Server::Server(int port) : port(port)
 {
-    // build socket-> bind to a port-> listen for calls-> accept the connection
+    init_socket();
+}
+
+void Server::init_socket()
+{
+    server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_socket_fd < 0)
+    {
+        perror("Socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    int opt = 1;
+    if (setsockopt(server_socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
+    {
+        perror("setpocket failed");
+        exit(EXIT_FAILURE);
+    }
 
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(6379);
+    server_addr.sin_port = htons(port);
 
-    // build socket
-    int socket_id = socket(AF_INET, SOCK_STREAM, 0);
-
-    int opt = 1;
-    if (setsockopt(socket_id, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
+    if (bind(server_socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
-        perror("setpocket failed");
-        return -1;
+        perror("Bind failed");
+        exit(EXIT_FAILURE);
     }
 
-    // bind to a port
-    int a = bind(socket_id, (struct sockaddr *)&server_addr, sizeof(server_addr));
-    if (a < 0)
+    if (listen(server_socket_fd, 5) < 0)
     {
-        perror("Bind failed!");
-        return -1;
+        perror("Listen failed");
+        exit(EXIT_FAILURE);
     }
-    cout << "Bind successful!" << endl;
 
-    // listen
-    int b = listen(socket_id, 5);
-    if (b < 0)
-    {
-        perror("Listen failed!");
-        return -1;
-    }
-    cout << "Server is listening at PORT 6379..." << endl;
-
-    // accept
-
-    vector<pollfd> v;
     pollfd p;
-    p.fd = socket_id;
+    p.fd = server_socket_fd;
     p.events = POLLIN;
-    v.push_back(p);
+    fds.push_back(p);
 
-    struct sockaddr_in client_addr;
-    socklen_t client_len = sizeof(client_addr);
+    cout << "Server listening on port " << port << " ..." << endl;
+}
 
-    unordered_map<string, string> kv_store;
-
+void Server::run()
+{
     while (true)
     {
-        int ready = poll(v.data(), v.size(), -1);
+        int ready = poll(fds.data(), fds.size(), -1);
         if (ready == -1)
         {
             perror("Poll failed");
-            return -1;
+            break;
         }
-        for (int i = 0; i < v.size(); i++)
+        int i = 0;
+        for (; i < fds.size(); i++)
         {
-            if (v[i].revents)
+            if (fds[i].revents)
             {
-                if (v[i].fd == socket_id)
+                if (fds[i].fd == server_socket_fd)
                 {
-                    int c = accept(socket_id, (struct sockaddr *)&client_addr, &client_len);
-                    if (c == -1)
-                    {
-                        cout << "Accept failed";
-                        return -1;
-                    }
-                    pollfd clientFd;
-                    clientFd.fd = c;
-                    clientFd.events = POLLIN;
-                    v.push_back(clientFd);
+                    accept_new_connection();
                 }
-                else if (v[i].revents & POLLIN)
+                else if (fds[i].revents & POLLIN)
                 {
-                    int clientFd = v[i].fd;
-                    char buffer[4096];
-                    int d = read(clientFd, buffer, 4096);
-                    if (d == 0)
-                    {
-                        close(v[i].fd);
-                        v.erase(v.begin() + i);
-                        i--;
-                        continue;
-                    }
-                    buffer[d] = '\0';
-                    // cout << buffer << endl;
-
-                    stringstream ss(buffer);
-                    string token;
-                    vector<string> commands;
-
-                    while (getline(ss, token, '\n'))
-                    {
-                        token.pop_back();
-                        commands.push_back(token);
-                    }
-
-                    string response_buffer = "";
-                    int i = 0;
-                    while (i < commands.size())
-                    {   
-                        string s = "+PONG\r\n";
-                        string cmd;
-
-                        string cmdno = commands[i].erase(0,1);
-                        int nCmds = stoi(cmdno);
-
-                        if(commands.size() > i+2) cmd = commands[i+2];
-                        if(cmd == "COMMAND") {
-                            s = "-ERR unknown command 'COMMAND'\r\n";
-                            if(commands.size() > i+4 && commands[i+4] == "DOCS") i += (2*nCmds +1);
-                            else i += (2*nCmds +1);
-                            response_buffer += s;
-                            continue;
-                        }
-                        if(cmd == "CONFIG") {
-                            s = "-ERR unknown command 'CONFIG'\r\n";
-                            i += (2*nCmds +1);
-                            response_buffer += s;
-                            continue;
-                        }
-
-                        // if(commands.size() > i+2) cout << "User provided command is " << commands[i+2] << endl;
-
-                        if (commands.size() > i+4 && commands[i+2] == "ECHO")
-                        {
-                            s = "+" + commands[i+4] + "\r\n";
-                            i += (2*nCmds +1);
-                        }
-                        else if (commands.size() > i+6 && commands[i+2] == "SET")
-                        {
-                            kv_store[commands[i+4]] = commands[i+6];
-                            s = "+OK\r\n";
-                            i += (2*nCmds +1);
-                        }
-                        else if (commands.size() > i+4 && commands[i+2] == "GET")
-                        {
-                            if (kv_store.count(commands[i+4]))
-                            {
-                                string val = kv_store[commands[i+4]];
-                                s = "$" + to_string(val.size()) + "\r\n" + val + "\r\n";
-                            }
-                            else
-                            {
-                                s = "$-1\r\n";
-                            }
-                            i += (2*nCmds +1);
-                        }
-                        else  i += (2*nCmds +1);
-                        response_buffer += s;
-                    }
-                    int e = send(clientFd, response_buffer.c_str(), response_buffer.size(), 0);
+                    handle_client_data(i);
                 }
             }
         }
     }
+}
 
-    // read
+void Server::accept_new_connection()
+{
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
 
-    close(socket_id);
-    return 0;
+    int client_fd = accept(server_socket_fd, (struct sockaddr *)&client_addr, &client_len);
+    if (client_fd >= 0)
+    {
+        pollfd p;
+        p.fd = client_fd;
+        p.events = POLLIN;
+        fds.push_back(p);
+    }
+}
+
+void Server::handle_client_data(int &index)
+{
+    char buffer[4096];
+    int client_fd = fds[index].fd;
+    int bytes_read = read(client_fd, buffer, sizeof(buffer));
+
+    if (bytes_read <= 0)
+    {
+        close(client_fd);
+        fds.erase(fds.begin() + index);
+        index--;
+        return;
+    }
+
+    buffer[bytes_read] = '\0';
+    // cout << buffer << endl;
+
+    stringstream ss(buffer);
+    string token;
+    vector<string> commands;
+
+    while (getline(ss, token, '\n'))
+    {
+        token.pop_back();
+        commands.push_back(token);
+    }
+
+    string response_buffer = "";
+    response_buffer += process_commands(commands);
+
+    int e = send(client_fd, response_buffer.c_str(), response_buffer.size(), 0);
+    if (e == -1)
+        close(client_fd);
+}
+
+std::string Server::process_commands(std::vector<std::string> &commands)
+{
+    int i = 0;
+    string response = "";
+    while (i < commands.size())
+    {
+        string s = "+PONG\r\n";
+        string cmd;
+
+        string cmdno = commands[i].substr(1);
+        int nCmds = stoi(cmdno);
+
+        if (commands.size() > i + 2)
+            cmd = commands[i + 2];
+        if (cmd == "COMMAND")
+        {
+            s = "-ERR unknown command 'COMMAND'\r\n";
+            if (commands.size() > i + 4 && commands[i + 4] == "DOCS")
+                i += (2 * nCmds + 1);
+            else
+                i += (2 * nCmds + 1);
+            response += s;
+            continue;
+        }
+        if (cmd == "CONFIG")
+        {
+            s = "-ERR unknown command 'CONFIG'\r\n";
+            i += (2 * nCmds + 1);
+            response += s;
+            continue;
+        }
+
+        // if(commands.size() > i+2) cout << "User provided command is " << commands[i+2] << endl;
+
+        if (commands.size() > i + 4 && commands[i + 2] == "ECHO")
+        {
+            s = "+" + commands[i + 4] + "\r\n";
+            i += (2 * nCmds + 1);
+        }
+        else if (commands.size() > i + 6 && commands[i + 2] == "SET")
+        {
+            kv_store[commands[i + 4]] = commands[i + 6];
+            s = "+OK\r\n";
+            i += (2 * nCmds + 1);
+        }
+        else if (commands.size() > i + 4 && commands[i + 2] == "GET")
+        {
+            if (kv_store.count(commands[i + 4]))
+            {
+                string val = kv_store[commands[i + 4]];
+                s = "$" + to_string(val.size()) + "\r\n" + val + "\r\n";
+            }
+            else
+            {
+                s = "$-1\r\n";
+            }
+            i += (2 * nCmds + 1);
+        }
+        else
+            i += (2 * nCmds + 1);
+        response += s;
+    }
+    return response;
 }
