@@ -19,6 +19,6 @@ private:
 
 public:
     Server(int port);
-    
+    ~Server();
     void run();
 };

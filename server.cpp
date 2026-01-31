@@ -12,6 +12,19 @@ Server::Server(int port) : port(port)
     init_socket();
 }
 
+Server::~Server() {
+    cout<<"Shutting down server..."<<endl;
+
+    close(server_socket_fd);
+
+    for(int i=0;i<fds.size();i++) {
+        if(fds[i].fd >= 0) {
+            close(fds[i].fd);
+            fds[i].fd = -1;
+        }
+    }
+}
+
 void Server::init_socket()
 {
     server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
