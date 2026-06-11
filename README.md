@@ -23,6 +23,8 @@ redis-benchmark -p 6379 -t set,get -q -P 10
 ```
 **SET:** 606,060.56 requests per second **GET:** 602,409.69 requests per second
 
+**Note on WSL Performance:** The above results represent peak observed performance. Because WSL dynamically shares resources (CPU scheduling, RAM, network I/O) with the Windows host, day-to-day benchmark results can fluctuate significantly based on background OS processes or thermal limits. The heavy lifting here is achieved via the `-P 10` pipelining flag, which minimizes syscalls.
+
 ### How to Run:
 ```bash
 # Compile
